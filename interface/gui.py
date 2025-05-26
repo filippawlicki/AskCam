@@ -4,11 +4,12 @@ import threading
 import numpy as np
 import pyttsx3
 import queue
+import time
 from audio.listener import listen_hotword_and_get_question
 from vision.llava_wrapper import generate_answer
 
 
-shared_state = {"question": "", "new_question": False}
+shared_state = {"question": "", "new_question": False, "waiting_for_answer": False}
 state_lock = threading.Lock()
 current_frame = None
 
@@ -24,6 +25,11 @@ def tts_worker():
         tts_engine.say(text)
         tts_engine.runAndWait()
         tts_queue.task_done()
+
+        with state_lock:
+            shared_state["waiting_for_answer"] = False
+            shared_state["new_question"] = False
+            print(f"[TTS] Finished speaking: {text}")
 
         if tts_engine._inLoop:
             tts_engine.endLoop()
@@ -55,16 +61,20 @@ def ask_question(image, question):
 def hotword_listener():
     """Function is called in a separate thread to listen for hotword."""
     while True:
-        question_text = listen_hotword_and_get_question()
+        time.sleep(0.5) # Avoid busy waiting
         with state_lock:
-            print(f"[Hotword detected] Question: {question_text}")
-            shared_state["question"] = question_text
-            shared_state["new_question"] = True
+            if not shared_state["waiting_for_answer"]:
+                print("[Hotword listener] Waiting for hotword...")
+                question_text = listen_hotword_and_get_question()
+                print(f"[Hotword detected] Question: {question_text}")
+                shared_state["question"] = question_text
+                shared_state["new_question"] = True
 
 def periodic_check():
     global current_frame
     with state_lock:
         if shared_state["new_question"]:
+            shared_state["waiting_for_answer"] = True
             image = current_frame
             # Transfer from cv2 (BGR) to RGB format
             if image is not None:
@@ -72,7 +82,6 @@ def periodic_check():
             else:
                 image = None
             question = shared_state["question"]
-            shared_state["new_question"] = False
             answer, _ = ask_question(image, question)
             return question, answer
     return gr.update(), gr.update()

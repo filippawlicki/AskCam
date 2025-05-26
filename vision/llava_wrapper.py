@@ -19,6 +19,10 @@ SYSTEM_PROMPT = (
 def generate_answer(image: np.ndarray, question: str) -> str:
     pil_image = Image.fromarray(image)
 
+    # Make image 500x500 if it's larger
+    if pil_image.size[0] > 500 or pil_image.size[1] > 500:
+        pil_image = pil_image.resize((500, 500))
+
     full_prompt = f"{SYSTEM_PROMPT}\n<image>\nQuestion: {question}, Answer:"
 
     inputs = processor(text=full_prompt, images=pil_image, return_tensors="pt").to(model.device)

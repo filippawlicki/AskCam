@@ -61,7 +61,7 @@ def listen_hotword(hotword="hey ai"):
         if len(buffer) > SAMPLE_RATE:
           snippet = buffer[-SAMPLE_RATE:] # Get last 1 second of audio
           text = transcribe_audio(snippet)
-          #print(f"Transcribed: {text}")
+          print(f"Transcribed: {text}")
           if hotword in text:
             #print("Hotword detected!")
             stream.stop_stream()
