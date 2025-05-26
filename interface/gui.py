@@ -3,28 +3,30 @@ import cv2
 import threading
 import numpy as np
 import pyttsx3
+from audio.listener import listen_hotword_and_get_question
 from vision.llava_wrapper import generate_answer
 
 tts_engine = pyttsx3.init()
+
+shared_state = {"question": "", "new_question": False}
+state_lock = threading.Lock()
+current_frame = None
 
 def text_to_speech(text: str):
     tts_engine.say(text)
     tts_engine.runAndWait()
 
-def capture_frame():
+def capture_camera():
+    global current_frame
     cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        return None
-    ret, frame = cap.read()
-    cap.release()
-    if not ret:
-        return None
+    while True:
+        ret, frame = cap.read()
+        if ret:
+            current_frame = frame
 
-    # Change color from BGR (opencv) to RGB (gradio)
-    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    return frame
 
 def ask_question(image, question):
+    print(f"Image: {image.shape if image is not None else 'None'}, Question: {question}")
     if image is None:
         return "No image from camera!", None
 
@@ -35,29 +37,45 @@ def ask_question(image, question):
 
     return answer, image
 
-def live_camera_feed():
-    cap = cv2.VideoCapture(0)
+def hotword_listener():
+    """Function is called in a separate thread to listen for hotword."""
     while True:
-        ret, frame = cap.read()
-        if not ret:
-            continue
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        yield frame
+        question_text = listen_hotword_and_get_question()
+        with state_lock:
+            print(f"[Hotword detected] Question: {question_text}")
+            shared_state["question"] = question_text
+            shared_state["new_question"] = True
+
+def periodic_check():
+    global current_frame
+    with state_lock:
+        if shared_state["new_question"]:
+            image = current_frame
+            question = shared_state["question"]
+            shared_state["new_question"] = False
+            answer, _ = ask_question(image, question)
+            return question, answer
+    return gr.update(), gr.update()
+
 
 def run_gui():
     with gr.Blocks() as demo:
         gr.Markdown("# AskCam - Ask your camera what it sees")
 
         with gr.Row():
-            camera_feed = gr.Image(label="Camera feed", sources=["webcam"], streaming=True)
-            question_input = gr.Textbox(label="Enter your question", placeholder="What am I holding in my hand?") # For now just a placeholder
-
+            camera_feed = gr.Image(label="Camera feed", sources="webcam", type="numpy", streaming=True)
+            question_input = gr.Textbox(label="Detected question", interactive=False)
         output_text = gr.Textbox(label="Answer", interactive=False)
 
-        ask_btn = gr.Button("Ask")
+        timer = gr.Timer()
+        timer.tick(
+            periodic_check,
+            inputs=[],
+            outputs=[question_input, output_text]
+        )
 
-        ask_btn.click(fn=ask_question, inputs=[camera_feed, question_input], outputs=[output_text, camera_feed])
-
+        threading.Thread(target=hotword_listener, daemon=True).start()
+        threading.Thread(target=capture_camera, daemon=True).start()
     demo.launch()
 
 if __name__ == "__main__":
