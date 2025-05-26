@@ -20,21 +20,22 @@ def tts_worker():
     while True:
         text = tts_queue.get()
         if text is None:
-            break
+            continue
         tts_engine.stop()
         tts_engine.say(text)
         tts_engine.runAndWait()
         tts_queue.task_done()
 
         with state_lock:
-            shared_state["waiting_for_answer"] = False
-            shared_state["new_question"] = False
-            print(f"[TTS] Finished speaking: {text}")
+            if shared_state["waiting_for_answer"]:
+                shared_state["waiting_for_answer"] = False
+                print(f"[TTS] Finished speaking: {text}")
 
         if tts_engine._inLoop:
             tts_engine.endLoop()
 
 def text_to_speech(text: str):
+    print("[TTS] Added: " + text)
     tts_queue.put(text)
 
 def capture_camera():
@@ -53,8 +54,7 @@ def ask_question(image, question):
 
     answer = generate_answer(image, question)
 
-    # Run text-to-speech in a separate thread to avoid blocking the GUI
-    threading.Thread(target=text_to_speech, args=(answer,)).start()
+    text_to_speech(answer)
 
     return answer, image
 
@@ -69,12 +69,15 @@ def hotword_listener():
                 print(f"[Hotword detected] Question: {question_text}")
                 shared_state["question"] = question_text
                 shared_state["new_question"] = True
+                shared_state["waiting_for_answer"] = True
 
 def periodic_check():
     global current_frame
+    print("[Periodic check] Checking for new question...")
     with state_lock:
         if shared_state["new_question"]:
-            shared_state["waiting_for_answer"] = True
+            print("[Periodic check] New question detected.")
+            shared_state["new_question"] = False
             image = current_frame
             # Transfer from cv2 (BGR) to RGB format
             if image is not None:

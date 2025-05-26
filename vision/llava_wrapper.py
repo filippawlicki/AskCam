@@ -28,7 +28,7 @@ def generate_answer(image: np.ndarray, question: str) -> str:
     inputs = processor(text=full_prompt, images=pil_image, return_tensors="pt").to(model.device)
 
     # Generate the answer
-    output = model.generate(**inputs, max_new_tokens=50)
+    output = model.generate(**inputs, max_new_tokens=200)
     decoded = processor.batch_decode(output, skip_special_tokens=True)[0]
 
     # Delete potential "Answer:" prefix
