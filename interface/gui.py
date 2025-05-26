@@ -3,18 +3,33 @@ import cv2
 import threading
 import numpy as np
 import pyttsx3
+import queue
 from audio.listener import listen_hotword_and_get_question
 from vision.llava_wrapper import generate_answer
 
-tts_engine = pyttsx3.init()
 
 shared_state = {"question": "", "new_question": False}
 state_lock = threading.Lock()
 current_frame = None
 
+tts_engine = pyttsx3.init(driverName="nsss")
+tts_queue = queue.Queue()
+
+def tts_worker():
+    while True:
+        text = tts_queue.get()
+        if text is None:
+            break
+        tts_engine.stop()
+        tts_engine.say(text)
+        tts_engine.runAndWait()
+        tts_queue.task_done()
+
+        if tts_engine._inLoop:
+            tts_engine.endLoop()
+
 def text_to_speech(text: str):
-    tts_engine.say(text)
-    tts_engine.runAndWait()
+    tts_queue.put(text)
 
 def capture_camera():
     global current_frame
@@ -51,6 +66,11 @@ def periodic_check():
     with state_lock:
         if shared_state["new_question"]:
             image = current_frame
+            # Transfer from cv2 (BGR) to RGB format
+            if image is not None:
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            else:
+                image = None
             question = shared_state["question"]
             shared_state["new_question"] = False
             answer, _ = ask_question(image, question)
@@ -74,6 +94,7 @@ def run_gui():
             outputs=[question_input, output_text]
         )
 
+        threading.Thread(target=tts_worker, daemon=True).start()
         threading.Thread(target=hotword_listener, daemon=True).start()
         threading.Thread(target=capture_camera, daemon=True).start()
     demo.launch()
