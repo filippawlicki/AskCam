@@ -61,8 +61,8 @@ class AudioListener:
                 break
             time.sleep(0.1)
 
-    def listen_question(self, duration_sec=5, silence_threshold=0.01, silence_duration_sec=1.5):
-      """Listen for a question after detecting the hotword."""
+    def listen_question(self, duration_sec=10, silence_threshold=0.01, silence_duration_sec=1.0):
+      """Listen for a question after detecting the hotword. Starts silence timeout only after voice is detected."""
       p = pyaudio.PyAudio()
       stream = p.open(format=pyaudio.paFloat32,
                       channels=self.CHANNELS,
@@ -72,21 +72,25 @@ class AudioListener:
 
       frames = []
       silence_frames = 0
+      has_started_speaking = False
       max_silence_frames = int(self.SAMPLE_RATE / self.CHUNK * silence_duration_sec)
+      total_frames = int(self.SAMPLE_RATE / self.CHUNK * duration_sec)
 
-      for _ in range(0, int(self.SAMPLE_RATE / self.CHUNK * duration_sec)):
+      for _ in range(total_frames):
         data = stream.read(self.CHUNK)
         audio = np.frombuffer(data, dtype=np.float32)
         frames.append(audio)
 
-        # Calculate RMS and check for silence
+        # Calculate RMS
         rms = np.sqrt(np.mean(audio ** 2))
-        if rms < silence_threshold:
+
+        if rms >= silence_threshold:
+          has_started_speaking = True
+          silence_frames = 0  # reset silence if voice is detected
+        elif has_started_speaking:
           silence_frames += 1
           if silence_frames >= max_silence_frames:
             break
-        else:
-          silence_frames = 0
 
       stream.stop_stream()
       stream.close()
