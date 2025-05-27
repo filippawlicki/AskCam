@@ -1,13 +1,6 @@
 import torch
 import numpy as np
 import sounddevice as sd
-from parler_tts import ParlerTTSForConditionalGeneration # pip install git+https://github.com/huggingface/parler-tts.git
-from transformers import AutoTokenizer
-import pyttsx3
-from pydub import AudioSegment
-from pydub.playback import play
-import io
-import os
 from TTS.api import TTS
 
 
@@ -25,14 +18,8 @@ class myTTS:
         if not isinstance(audio, np.ndarray):
             audio = np.array(audio)
 
-        # Ensure float32
-        if audio.dtype != np.float32:
-            audio = audio.astype(np.float32)
-
-        # Normalize if outside [-1, 1]
-        max_val = np.max(np.abs(audio))
-        if max_val > 1.0:
-            audio /= max_val
+        duration_sec = len(audio) / 22050
+        print(f"[TTS] Playing audio of duration: {duration_sec:.2f} sec")
 
         try:
             sd.play(audio, samplerate=22050)

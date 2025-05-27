@@ -11,7 +11,7 @@ from audio.tts import myTTS
 
 
 shared_state = {"question": "", "new_question": False, "waiting_for_answer": False, "answer": ""}
-state_lock = threading.Lock()
+state_lock = threading.RLock()
 current_frame = None
 
 tts_queue = queue.Queue()
@@ -26,8 +26,10 @@ def tts_worker():
         tts_engine.speak(text)
         print("[TTS] Finished speaking: " + text)
         tts_queue.task_done()
+        print("[TTS] Task done, checking for waiting_for_answer state...")
         with state_lock:
             shared_state["waiting_for_answer"] = False
+            print("[TTS] Reset waiting_for_answer = False")
 
 def text_to_speech(text: str):
     """Add text to the TTS queue for processing."""
@@ -65,6 +67,8 @@ def hotword_listener():
     while True:
         with state_lock:
             should_listen = not shared_state["waiting_for_answer"]
+        #print(f"[Hotword listener] should_listen={should_listen}")
+        time.sleep(0.5) # Avoid busy waiting
 
         if should_listen:
             print("[Hotword listener] Waiting for hotword...")
