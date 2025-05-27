@@ -1,32 +1,42 @@
 import numpy as np
-import sounddevice as sd
-from TTS.api import TTS
+from kokoro import KPipeline
+from pydub import AudioSegment
+from pydub.playback import play
+
 
 
 class myTTS:
-    def __init__(self, device=None):
+    def __init__(self):
         """Initialize the TTS system."""
-        self.engine = TTS(model_name="tts_models/en/ljspeech/tacotron2-DDC", progress_bar=False)
+        self.engine = KPipeline(lang_code='a')
 
     def generate_audio(self, text):
-        audio_arr = self.engine.tts(text)
-        return audio_arr
+        audio_res = self.engine(text, voice='af_heart')
+        return audio_res
 
-    def play_audio(self, audio: np.ndarray):
+    def play_audio(self, generator):
         """Play the generated audio using sounddevice and wait for it to end speaking."""
-        if not isinstance(audio, np.ndarray):
-            audio = np.array(audio)
+        for i, (gs, ps, audio) in enumerate(generator):
+            if not isinstance(audio, np.ndarray):
+                audio = np.array(audio)
+            audio = audio.astype(np.float32)
 
-        try:
-            sd.play(audio, samplerate=22050)
-            sd.wait()
-        except Exception as e:
-            print(f"[TTS] Audio playback failed: {e}")
+            audio_int16 = (audio * 32767).astype(np.int16)
+            audio_segment = AudioSegment(
+                audio_int16.tobytes(),
+                frame_rate=24000,
+                sample_width=2,  # 2 bytes = 16-bit PCM
+                channels=1
+            )
+
+            normalized = audio_segment.apply_gain(-audio_segment.max_dBFS)
+
+            play(normalized)
 
     def speak(self, text: str):
         """Generate and play audio for the given text."""
-        audio = self.generate_audio(text)
-        self.play_audio(audio)
+        generator = self.generate_audio(text)
+        self.play_audio(generator)
 
 if __name__ == "__main__":
     tts = myTTS()
