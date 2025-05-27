@@ -1,119 +1,127 @@
-import pyaudio
 import numpy as np
-import whisper
-import queue
-import time
 import threading
-
-# Audio config
-SAMPLE_RATE = 16000
-CHANNELS = 1
-CHUNK = 1024
-RECORD_SECONDS_QUESTION = 5
-
-# Whisper model
-model = whisper.load_model("tiny.en")
-
-# Shared queue for audio
-audio_queue = queue.Queue()
+import pyaudio
+import whisper
+import time
 
 
-def start_audio_stream(callback):
-  """Start a PyAudio stream with the given callback."""
-  p = pyaudio.PyAudio()
-  stream = p.open(format=pyaudio.paFloat32,
-                  channels=CHANNELS,
-                  rate=SAMPLE_RATE,
-                  input=True,
-                  frames_per_buffer=CHUNK,
-                  stream_callback=callback)
-  return stream, p
+class AudioListener:
+    def __init__(self, model_name="tiny.en", sample_rate=16000, channels=1, chunk=1024, buffer_size=32000):
+        self.SAMPLE_RATE = sample_rate
+        self.CHANNELS = channels
+        self.CHUNK = chunk
+        self.BUFFER_SIZE = buffer_size
 
+        self.audio_buffer = np.zeros(self.BUFFER_SIZE, dtype=np.float32)
+        self.buffer_lock = threading.Lock()
+        self.write_index = 0
 
-def callback_pyaudio(in_data, frame_count, time_info, status):
-  """PyAudio callback to continuously feed audio chunks."""
-  audio = np.frombuffer(in_data, dtype=np.float32)
-  audio_queue.put(audio)
-  return (in_data, pyaudio.paContinue)
+        self.model = whisper.load_model(model_name)
+        self.stream = None
+        self.pa = None
 
+    def start_audio_stream(self):
+        """Start a PyAudio stream with the given callback."""
+        self.pa = pyaudio.PyAudio()
+        self.stream = self.pa.open(format=pyaudio.paFloat32,
+                                   channels=self.CHANNELS,
+                                   rate=self.SAMPLE_RATE,
+                                   input=True,
+                                   frames_per_buffer=self.CHUNK,
+                                   stream_callback=self.callback_pyaudio)
+        self.stream.start_stream()
 
-def transcribe_audio(audio_np):
-  """Transcribe using Whisper and normalize if needed."""
-  audio_float32 = audio_np.astype(np.float32)
+    def callback_pyaudio(self, in_data, frame_count, time_info, status):
+        """PyAudio callback to update the circular buffer."""
+        audio = np.frombuffer(in_data, dtype=np.float32)
 
-  result = model.transcribe(audio_float32, fp16=False, language="en")
-  return result["text"].strip().lower()
+        with self.buffer_lock:
+            end_index = (self.write_index + len(audio)) % self.BUFFER_SIZE
+            if end_index < self.write_index:
+                self.audio_buffer[self.write_index:] = audio[:self.BUFFER_SIZE - self.write_index]
+                self.audio_buffer[:end_index] = audio[self.BUFFER_SIZE - self.write_index:]
+            else:
+                self.audio_buffer[self.write_index:end_index] = audio
+            self.write_index = end_index
 
+        return in_data, pyaudio.paContinue
 
-def listen_hotword(hotword="hey ai"):
-  """Continuously listen for the hotword in real time."""
-  print(f"Listening for hotword: '{hotword}'...")
-  stream, pa = start_audio_stream(callback_pyaudio)
-  stream.start_stream()
+    def listen_hotword(self):
+        """Continuously transcribe audio from the circular buffer and wait for hotword."""
+        #print("Listening for hotword...")
+        while True:
+            with self.buffer_lock:
+                start_index = (self.write_index - self.SAMPLE_RATE) % self.BUFFER_SIZE
+                if start_index < 0:
+                    snippet = np.concatenate((self.audio_buffer[start_index:], self.audio_buffer[:self.write_index]))
+                else:
+                    snippet = self.audio_buffer[start_index:self.write_index]
 
-  buffer = np.zeros(0, dtype=np.float32)
-  try:
-    while True:
-      while not audio_queue.empty():
-        data = audio_queue.get()
-        buffer = np.concatenate([buffer, data])
+            text = self.model.transcribe(snippet, fp16=False, language="en")["text"].strip().lower()
+            #print(f"Transcribed: {text}")
+            if any(word in text for word in ["hi", "hey"]):
+                print("Hotword detected!")
+                break
+            time.sleep(0.1)
 
-        if len(buffer) > SAMPLE_RATE:
-          snippet = buffer[-SAMPLE_RATE:] # Get last 1 second of audio
-          text = transcribe_audio(snippet)
-          print(f"Transcribed: {text}")
-          if hotword in text:
-            #print("Hotword detected!")
-            stream.stop_stream()
-            stream.close()
-            pa.terminate()
-            return
-          # Keep last 1.5s of buffer
-          if len(buffer) > int(SAMPLE_RATE * 1.5):
-            buffer = buffer[-int(SAMPLE_RATE * 1.5):]
-      time.sleep(0.1)
-  except KeyboardInterrupt:
-    print("Hotword listening stopped.")
-    stream.stop_stream()
-    stream.close()
-    pa.terminate()
+    def listen_question(self, duration_sec=5, silence_threshold=0.01, silence_duration_sec=1.5):
+      """Listen for a question after detecting the hotword."""
+      p = pyaudio.PyAudio()
+      stream = p.open(format=pyaudio.paFloat32,
+                      channels=self.CHANNELS,
+                      rate=self.SAMPLE_RATE,
+                      input=True,
+                      frames_per_buffer=self.CHUNK)
 
+      frames = []
+      silence_frames = 0
+      max_silence_frames = int(self.SAMPLE_RATE / self.CHUNK * silence_duration_sec)
 
-def record_audio_pyaudio(duration_sec=5):
-  """Record audio using PyAudio for a fixed duration."""
-  p = pyaudio.PyAudio()
-  stream = p.open(format=pyaudio.paFloat32,
-                  channels=CHANNELS,
-                  rate=SAMPLE_RATE,
-                  input=True,
-                  frames_per_buffer=CHUNK)
+      for _ in range(0, int(self.SAMPLE_RATE / self.CHUNK * duration_sec)):
+        data = stream.read(self.CHUNK)
+        audio = np.frombuffer(data, dtype=np.float32)
+        frames.append(audio)
 
-  print(f"Recording question for {duration_sec} seconds...")
-  frames = []
+        # Calculate RMS and check for silence
+        rms = np.sqrt(np.mean(audio ** 2))
+        if rms < silence_threshold:
+          silence_frames += 1
+          if silence_frames >= max_silence_frames:
+           # print("Silence detected, stopping early.")
+            break
+        else:
+          silence_frames = 0
 
-  for _ in range(0, int(SAMPLE_RATE / CHUNK * duration_sec)):
-    data = stream.read(CHUNK)
-    audio = np.frombuffer(data, dtype=np.float32)
-    frames.append(audio)
+      stream.stop_stream()
+      stream.close()
+      p.terminate()
 
-  stream.stop_stream()
-  stream.close()
-  p.terminate()
+      full_audio = np.concatenate(frames)
+      question_text = self.model.transcribe(full_audio, fp16=False, language="en")["text"].strip().lower()
+      #print(f"Question: {question_text}")
+      return question_text
 
-  audio_np = np.concatenate(frames)
-  return audio_np
+    def listen_hotword_and_get_question(self):
+        """Listen for hotword and then get the question."""
+        self.listen_hotword()
+        question = self.listen_question()
+        return question
 
+    def main_loop(self):
+        """Main loop to detect hotword and listen for questions."""
+        while True:
+            self.listen_hotword()
+            question = self.listen_question()
+            #print(f"Detected question: {question}")
 
-def listen_hotword_and_get_question():
-  """Wait for hotword and then record and transcribe a question."""
-  listen_hotword()
-  audio_question = record_audio_pyaudio(RECORD_SECONDS_QUESTION)
-  #print("Transcribing question...")
-  question_text = transcribe_audio(audio_question)
-  #print(f"Question: {question_text}")
-  return question_text
+        if self.stream:
+            self.stream.stop_stream()
+            self.stream.close()
+        if self.pa:
+            self.pa.terminate()
 
 
 if __name__ == "__main__":
-  question = listen_hotword_and_get_question()
-  #print(f"\nFinal question: {question}")
+    listener = AudioListener()
+    listener.start_audio_stream()
+    listener.main_loop()

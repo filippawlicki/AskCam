@@ -5,36 +5,32 @@ import numpy as np
 import pyttsx3
 import queue
 import time
-from audio.listener import listen_hotword_and_get_question
+from audio.listener import AudioListener
 from vision.llava_wrapper import generate_answer
+from audio.tts import myTTS
 
 
-shared_state = {"question": "", "new_question": False, "waiting_for_answer": False}
+shared_state = {"question": "", "new_question": False, "waiting_for_answer": False, "answer": ""}
 state_lock = threading.Lock()
 current_frame = None
 
-tts_engine = pyttsx3.init(driverName="nsss")
 tts_queue = queue.Queue()
 
 def tts_worker():
+    """Background worker to process TTS requests from the queue."""
+    tts_engine = myTTS()
     while True:
         text = tts_queue.get()
-        if text is None:
+        if text is None:  # Exit signal
             continue
-        tts_engine.stop()
-        tts_engine.say(text)
-        tts_engine.runAndWait()
+        tts_engine.speak(text)
+        print("[TTS] Finished speaking: " + text)
         tts_queue.task_done()
-
         with state_lock:
-            if shared_state["waiting_for_answer"]:
-                shared_state["waiting_for_answer"] = False
-                print(f"[TTS] Finished speaking: {text}")
-
-        if tts_engine._inLoop:
-            tts_engine.endLoop()
+            shared_state["waiting_for_answer"] = False
 
 def text_to_speech(text: str):
+    """Add text to the TTS queue for processing."""
     print("[TTS] Added: " + text)
     tts_queue.put(text)
 
@@ -56,38 +52,56 @@ def ask_question(image, question):
 
     text_to_speech(answer)
 
+    with state_lock:
+        shared_state["answer"] = answer
+
+
     return answer, image
 
 def hotword_listener():
     """Function is called in a separate thread to listen for hotword."""
+    listener = AudioListener()
+    listener.start_audio_stream()
     while True:
-        time.sleep(0.5) # Avoid busy waiting
         with state_lock:
-            if not shared_state["waiting_for_answer"]:
-                print("[Hotword listener] Waiting for hotword...")
-                question_text = listen_hotword_and_get_question()
-                print(f"[Hotword detected] Question: {question_text}")
+            should_listen = not shared_state["waiting_for_answer"]
+
+        if should_listen:
+            print("[Hotword listener] Waiting for hotword...")
+            question_text = listener.listen_hotword_and_get_question()
+
+            print(f"[Hotword detected] Question: {question_text}")
+            with state_lock:
                 shared_state["question"] = question_text
                 shared_state["new_question"] = True
                 shared_state["waiting_for_answer"] = True
 
-def periodic_check():
+
+
+def check_for_new_question():
+    """Function is called in a separate thread to check for new questions."""
     global current_frame
+    while True:
+        time.sleep(0.5)
+        print("[Ask question] Checking for new question...")
+        with state_lock:
+            if shared_state["new_question"]:
+                print("[Ask question] New question detected.")
+                shared_state["new_question"] = False
+                image = current_frame
+                # Transfer from cv2 (BGR) to RGB format
+                if image is not None:
+                    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                else:
+                    image = None
+                question = shared_state["question"]
+                ask_question(image, question)
+
+def periodic_check():
     print("[Periodic check] Checking for new question...")
     with state_lock:
-        if shared_state["new_question"]:
-            print("[Periodic check] New question detected.")
-            shared_state["new_question"] = False
-            image = current_frame
-            # Transfer from cv2 (BGR) to RGB format
-            if image is not None:
-                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            else:
-                image = None
-            question = shared_state["question"]
-            answer, _ = ask_question(image, question)
-            return question, answer
-    return gr.update(), gr.update()
+        return shared_state["question"], shared_state["answer"]
+
 
 
 def run_gui():
@@ -106,9 +120,10 @@ def run_gui():
             outputs=[question_input, output_text]
         )
 
-        threading.Thread(target=tts_worker, daemon=True).start()
-        threading.Thread(target=hotword_listener, daemon=True).start()
-        threading.Thread(target=capture_camera, daemon=True).start()
+    threading.Thread(target=check_for_new_question, daemon=True).start()
+    threading.Thread(target=tts_worker, daemon=True).start()
+    threading.Thread(target=hotword_listener, daemon=True).start()
+    threading.Thread(target=capture_camera, daemon=True).start()
     demo.launch()
 
 if __name__ == "__main__":
