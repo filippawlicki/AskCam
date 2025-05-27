@@ -12,7 +12,8 @@ model = LlavaForConditionalGeneration.from_pretrained(
 
 SYSTEM_PROMPT = (
     "You are an AI visual assistant. "
-    "You will be given an image and a related question. "
+    "You will be given an image of a user and a related question. "
+    "You're looking at the image to answer the question. "
     "Answer the question in a concise and informative way based only on what you see in the image."
 )
 
