@@ -3,6 +3,7 @@ import threading
 import pyaudio
 import whisper
 import time
+import re
 
 
 class AudioListener:
@@ -57,7 +58,8 @@ class AudioListener:
                     snippet = self.audio_buffer[start_index:self.write_index]
 
             text = self.model.transcribe(snippet, fp16=False, language="en")["text"].strip().lower()
-            if any(word in text for word in ["hi", "hey"]):
+            text = text.lower().strip()
+            if re.search(r'\b(hi|hey|hi\.|hi!|hey\.|hey!)\b', text):
                 break
             time.sleep(0.1)
 
