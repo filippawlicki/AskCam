@@ -1,8 +1,6 @@
 import gradio as gr
 import cv2
 import threading
-import numpy as np
-import pyttsx3
 import queue
 import time
 from audio.listener import AudioListener
@@ -10,7 +8,7 @@ from vision.llava_wrapper import generate_answer
 from audio.tts import myTTS
 
 
-shared_state = {"question": "", "new_question": False, "waiting_for_answer": False, "answer": ""}
+shared_state = {"question": "", "new_question": False, "waiting_for_answer": False, "answer": "", "info_text": ""}
 state_lock = threading.RLock()
 current_frame = None
 
@@ -23,17 +21,15 @@ def tts_worker():
         text = tts_queue.get()
         if text is None:  # Exit signal
             continue
+        with state_lock:
+            shared_state["info_text"] = "Generating speech..."
         tts_engine.speak(text)
-        print("[TTS] Finished speaking: " + text)
         tts_queue.task_done()
-        print("[TTS] Task done, checking for waiting_for_answer state...")
         with state_lock:
             shared_state["waiting_for_answer"] = False
-            print("[TTS] Reset waiting_for_answer = False")
 
 def text_to_speech(text: str):
     """Add text to the TTS queue for processing."""
-    print("[TTS] Added: " + text)
     tts_queue.put(text)
 
 def capture_camera():
@@ -46,7 +42,6 @@ def capture_camera():
 
 
 def ask_question(image, question):
-    print(f"Image: {image.shape if image is not None else 'None'}, Question: {question}")
     if image is None:
         return "No image from camera!", None
 
@@ -67,18 +62,24 @@ def hotword_listener():
     while True:
         with state_lock:
             should_listen = not shared_state["waiting_for_answer"]
-        #print(f"[Hotword listener] should_listen={should_listen}")
         time.sleep(0.5) # Avoid busy waiting
 
         if should_listen:
-            print("[Hotword listener] Waiting for hotword...")
-            question_text = listener.listen_hotword_and_get_question()
+            with state_lock:
+                shared_state["info_text"] = "Listening for hotword (hey)..."
 
-            print(f"[Hotword detected] Question: {question_text}")
+            listener.listen_hotword()
+            with state_lock:
+                shared_state["info_text"] = "Hotword detected. Now listening for question..."
+
+            question_text = listener.listen_question()
+
+
             with state_lock:
                 shared_state["question"] = question_text
                 shared_state["new_question"] = True
                 shared_state["waiting_for_answer"] = True
+                shared_state["info_text"] = "Question received. Processing..."
 
 
 
@@ -87,24 +88,24 @@ def check_for_new_question():
     global current_frame
     while True:
         time.sleep(0.5)
-        print("[Ask question] Checking for new question...")
         with state_lock:
-            if shared_state["new_question"]:
-                print("[Ask question] New question detected.")
+            should_check = shared_state["new_question"]
+
+        if should_check:
+            with state_lock:
                 shared_state["new_question"] = False
-                image = current_frame
-                # Transfer from cv2 (BGR) to RGB format
-                if image is not None:
-                    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                else:
-                    image = None
                 question = shared_state["question"]
-                ask_question(image, question)
+            image = current_frame
+            # Transfer from cv2 (BGR) to RGB format
+            if image is not None:
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            else:
+                image = None
+            ask_question(image, question)
 
 def periodic_check():
-    print("[Periodic check] Checking for new question...")
     with state_lock:
-        return shared_state["question"], shared_state["answer"]
+        return shared_state["info_text"], shared_state["answer"]
 
 
 
@@ -113,15 +114,15 @@ def run_gui():
         gr.Markdown("# AskCam - Ask your camera what it sees")
 
         with gr.Row():
-            camera_feed = gr.Image(label="Camera feed", sources="webcam", type="numpy", streaming=True)
-            question_input = gr.Textbox(label="Detected question", interactive=False)
+            camera_feed = gr.Image(label="Camera feed", sources="webcam", type="numpy", streaming=True, height="70vh")
+        info_text = gr.Textbox(label="Info", interactive=False)
         output_text = gr.Textbox(label="Answer", interactive=False)
 
         timer = gr.Timer()
         timer.tick(
             periodic_check,
             inputs=[],
-            outputs=[question_input, output_text]
+            outputs=[info_text, output_text]
         )
 
     threading.Thread(target=check_for_new_question, daemon=True).start()

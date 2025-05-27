@@ -1,4 +1,3 @@
-import torch
 import numpy as np
 import sounddevice as sd
 from TTS.api import TTS
@@ -18,9 +17,6 @@ class myTTS:
         if not isinstance(audio, np.ndarray):
             audio = np.array(audio)
 
-        duration_sec = len(audio) / 22050
-        print(f"[TTS] Playing audio of duration: {duration_sec:.2f} sec")
-
         try:
             sd.play(audio, samplerate=22050)
             sd.wait()
@@ -29,7 +25,6 @@ class myTTS:
 
     def speak(self, text: str):
         """Generate and play audio for the given text."""
-        print(f"[TTS] Speaking: {text}")
         audio = self.generate_audio(text)
         self.play_audio(audio)
 

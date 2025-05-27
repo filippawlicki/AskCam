@@ -48,7 +48,6 @@ class AudioListener:
 
     def listen_hotword(self):
         """Continuously transcribe audio from the circular buffer and wait for hotword."""
-        #print("Listening for hotword...")
         while True:
             with self.buffer_lock:
                 start_index = (self.write_index - self.SAMPLE_RATE) % self.BUFFER_SIZE
@@ -58,9 +57,7 @@ class AudioListener:
                     snippet = self.audio_buffer[start_index:self.write_index]
 
             text = self.model.transcribe(snippet, fp16=False, language="en")["text"].strip().lower()
-            #print(f"Transcribed: {text}")
             if any(word in text for word in ["hi", "hey"]):
-                print("Hotword detected!")
                 break
             time.sleep(0.1)
 
@@ -87,7 +84,6 @@ class AudioListener:
         if rms < silence_threshold:
           silence_frames += 1
           if silence_frames >= max_silence_frames:
-           # print("Silence detected, stopping early.")
             break
         else:
           silence_frames = 0
@@ -98,7 +94,6 @@ class AudioListener:
 
       full_audio = np.concatenate(frames)
       question_text = self.model.transcribe(full_audio, fp16=False, language="en")["text"].strip().lower()
-      #print(f"Question: {question_text}")
       return question_text
 
     def listen_hotword_and_get_question(self):
@@ -107,21 +102,13 @@ class AudioListener:
         question = self.listen_question()
         return question
 
-    def main_loop(self):
-        """Main loop to detect hotword and listen for questions."""
-        while True:
-            self.listen_hotword()
-            question = self.listen_question()
-            #print(f"Detected question: {question}")
-
-        if self.stream:
-            self.stream.stop_stream()
-            self.stream.close()
-        if self.pa:
-            self.pa.terminate()
-
 
 if __name__ == "__main__":
     listener = AudioListener()
     listener.start_audio_stream()
-    listener.main_loop()
+    print("Listening for hotword...")
+    question = listener.listen_hotword_and_get_question()
+    print(f"Detected question: {question}")
+    listener.stream.stop_stream()
+    listener.stream.close()
+    listener.pa.terminate()
