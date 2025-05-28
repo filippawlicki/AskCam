@@ -111,10 +111,9 @@ def periodic_check():
 
 def run_gui():
     with gr.Blocks() as demo:
-        gr.Markdown("# AskCam - Ask your camera what it sees")
+        gr.Markdown("# AskCam - Ask Your Camera, Answered by LLM")
 
-        with gr.Row():
-            camera_feed = gr.Image(label="Camera feed", sources="webcam", type="numpy", streaming=True, height="70vh")
+        camera_feed = gr.Image(label="Camera feed", sources="webcam", type="numpy", streaming=True, height="70vh")
         info_text = gr.Textbox(label="Info", interactive=False)
         output_text = gr.Textbox(label="Answer", interactive=False)
 
