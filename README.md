@@ -15,7 +15,7 @@ understand the scene, and responds to your question with spoken audio.
 
 ## Demo
 
-[askcam_video.mp4](assets/askcam_video.mp4)
+https://github.com/user-attachments/assets/042a6991-95bf-448b-9c81-8755c1b80e03
 
 ## Tech Stack
 
